@@ -5,21 +5,16 @@ import (
 )
 
 const (
-	headerMagic    = 0x474f4442 // GODB
-	pageSize       = 8 * 1024   // 8KiB
-	pageHeaderSize = 24         // 24B
+	headerMagic = 0x474f4442 // GODB
+	pageSize    = 8 * 1024   // 8KiB
 )
 
 type Table struct {
-	file  *os.File
-	hdr   tableHeader
-	pages []page
-}
+	file *os.File
 
-type tableHeader struct {
-	magic    uint32
 	pageSize uint32
 	pageNum  uint32
+	pages    []page
 }
 
 func Open(path string) (*Table, error) {
