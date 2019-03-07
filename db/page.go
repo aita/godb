@@ -10,18 +10,19 @@ const (
 	recordHeaderSize = 4
 )
 
-type item uint16
+type item uint32
 
-func makeItem(size, off, z int) item {
-	return item(0)
+func makeItem(size, off int) item {
+	it := size<<16 | (off & 0xFFFF)
+	return item(it)
 }
 
 func (it item) size() int {
-	return 0
+	return int(it >> 16)
 }
 
 func (it item) off() int {
-	return 0
+	return int(it & 0xFFFF)
 }
 
 type record struct {
@@ -54,27 +55,23 @@ func (p *page) header() *pageHeader {
 	return (*pageHeader)(unsafe.Pointer(&p.buf[0]))
 }
 
-func (p *page) headerPos() uintptr {
-	return uintptr(unsafe.Pointer(&p.buf[0]))
-}
-
 func (p *page) itemPos(i int) uintptr {
-	return p.headerPos() + pageHeaderSize + uintptr(4*i)
+	return pageHeaderSize + uintptr(i)*unsafe.Sizeof(item(0))
 }
 
 func (p *page) getItem(i int) item {
-	return *(*item)(unsafe.Pointer(p.itemPos(i)))
+	it := (*item)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
+	return *it
 }
 
 func (p *page) setItem(i int, it item) {
-	ptr := (*item)(unsafe.Pointer(p.itemPos(i)))
+	ptr := (*item)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
 	*ptr = it
 }
 
 func (p *page) read(i int) *record {
 	it := p.getItem(i)
 	off := it.off()
-	size := it.size()
 	keySize := int(*(*uint16)(unsafe.Pointer(&p.buf[off])))
 	valueSize := int(*(*uint16)(unsafe.Pointer(&p.buf[off+2])))
 	keyStart := recordHeaderSize + off
@@ -92,8 +89,8 @@ func (p *page) insert(rec record) error {
 	if remainingSize < size {
 		return fmt.Errorf("no empty space")
 	}
-	item := makeItem(size, 0, 0)
-	p.setItem(int(hdr.itemNum), item)
+	it := makeItem(size, int(hdr.emptyEnd)-size)
+	p.setItem(int(hdr.itemNum), it)
 	off := int(hdr.emptyEnd) - int(size)
 	keySize := (*uint16)(unsafe.Pointer(&p.buf[off]))
 	valueSize := (*uint16)(unsafe.Pointer(&p.buf[off+2]))
@@ -102,5 +99,7 @@ func (p *page) insert(rec record) error {
 	copy(p.buf[recordHeaderSize+off:], rec.key)
 	copy(p.buf[recordHeaderSize+off+len(rec.key):], rec.value)
 	hdr.itemNum++
+	hdr.emptyStart += uint32(unsafe.Sizeof(it))
+	hdr.emptyEnd -= uint32(size)
 	return nil
 }
