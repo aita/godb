@@ -1,7 +1,7 @@
 package db
 
 import (
-	"fmt"
+	"errors"
 	"unsafe"
 )
 
@@ -10,38 +10,38 @@ const (
 	recordHeaderSize = 4
 )
 
-type item uint32
+var ErrNoEmptySpace = errors.New("db: no empty space")
 
-func makeItem(size, off int) item {
+type itemID uint32
+
+func makeItemID(size, off int) itemID {
 	it := size<<16 | (off & 0xFFFF)
-	return item(it)
+	return itemID(it)
 }
 
-func (it item) size() int {
+func (it itemID) size() int {
 	return int(it >> 16)
 }
 
-func (it item) off() int {
+func (it itemID) off() int {
 	return int(it & 0xFFFF)
 }
 
-type record struct {
-	key   []byte
-	value []byte
-}
-
 type page struct {
+	id  int
 	buf []byte
 }
 
-func newPage(buf []byte) *page {
+func newPage(id int, buf []byte) *page {
 	p := &page{
+		id:  id,
 		buf: buf,
 	}
 	hdr := p.header()
-	hdr.itemNum = 0
-	hdr.emptyStart = pageHeaderSize
-	hdr.emptyEnd = uint32(len(buf))
+	if hdr.itemNum == 0 {
+		hdr.emptyStart = pageHeaderSize
+		hdr.emptyEnd = uint32(len(buf))
+	}
 	return p
 }
 
@@ -51,55 +51,47 @@ type pageHeader struct {
 	emptyEnd   uint32
 }
 
+func (h *pageHeader) remainingSize() int {
+	return int(h.emptyEnd - h.emptyStart)
+}
+
 func (p *page) header() *pageHeader {
 	return (*pageHeader)(unsafe.Pointer(&p.buf[0]))
 }
 
 func (p *page) itemPos(i int) uintptr {
-	return pageHeaderSize + uintptr(i)*unsafe.Sizeof(item(0))
+	return pageHeaderSize + uintptr(i)*unsafe.Sizeof(itemID(0))
 }
 
-func (p *page) getItem(i int) item {
-	it := (*item)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
+func (p *page) getItem(i int) itemID {
+	it := (*itemID)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
 	return *it
 }
 
-func (p *page) setItem(i int, it item) {
-	ptr := (*item)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
+func (p *page) setItem(i int, it itemID) {
+	ptr := (*itemID)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
 	*ptr = it
 }
 
-func (p *page) read(i int) *record {
+func (p *page) read(i int) []byte {
 	it := p.getItem(i)
 	off := it.off()
-	keySize := int(*(*uint16)(unsafe.Pointer(&p.buf[off])))
-	valueSize := int(*(*uint16)(unsafe.Pointer(&p.buf[off+2])))
-	keyStart := recordHeaderSize + off
-	valueStart := keyStart + keySize
-	return &record{
-		key:   p.buf[keyStart:keySize],
-		value: p.buf[valueStart : valueStart+valueSize],
-	}
+	size := it.size()
+	return p.buf[off : off+size]
 }
 
-func (p *page) insert(rec record) error {
+func (p *page) insert(data []byte) error {
 	hdr := p.header()
-	size := recordHeaderSize + len(rec.key) + len(rec.value)
-	remainingSize := int(hdr.emptyEnd - hdr.emptyStart)
-	if remainingSize < size {
-		return fmt.Errorf("no empty space")
+	size := len(data)
+	if hdr.remainingSize() < size {
+		return ErrNoEmptySpace
 	}
-	it := makeItem(size, int(hdr.emptyEnd)-size)
+	off := int(hdr.emptyEnd) - size
+	it := makeItemID(size, int(hdr.emptyEnd)-size)
 	p.setItem(int(hdr.itemNum), it)
-	off := int(hdr.emptyEnd) - int(size)
-	keySize := (*uint16)(unsafe.Pointer(&p.buf[off]))
-	valueSize := (*uint16)(unsafe.Pointer(&p.buf[off+2]))
-	*keySize = uint16(len(rec.key))
-	*valueSize = uint16(len(rec.value))
-	copy(p.buf[recordHeaderSize+off:], rec.key)
-	copy(p.buf[recordHeaderSize+off+len(rec.key):], rec.value)
+	copy(p.buf[off:off+size], data)
 	hdr.itemNum++
 	hdr.emptyStart += uint32(unsafe.Sizeof(it))
-	hdr.emptyEnd -= uint32(size)
+	hdr.emptyEnd = uint32(off)
 	return nil
 }
