@@ -8,6 +8,7 @@ import (
 const (
 	pageHeaderSize   = 24
 	recordHeaderSize = 4
+	itemIDSize       = 4
 )
 
 var ErrNoEmptySpace = errors.New("db: no empty space")
@@ -60,7 +61,7 @@ func (p *page) header() *pageHeader {
 }
 
 func (p *page) itemPos(i int) uintptr {
-	return pageHeaderSize + uintptr(i)*unsafe.Sizeof(itemID(0))
+	return pageHeaderSize + uintptr(i)*itemIDSize
 }
 
 func (p *page) getItem(i int) itemID {
@@ -91,7 +92,7 @@ func (p *page) insert(data []byte) error {
 	p.setItem(int(hdr.numItems), it)
 	copy(p.buf[off:off+size], data)
 	hdr.numItems++
-	hdr.emptyStart += uint32(unsafe.Sizeof(it))
+	hdr.emptyStart += uint32(itemIDSize)
 	hdr.emptyEnd = uint32(off)
 	return nil
 }
