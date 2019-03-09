@@ -44,9 +44,12 @@ var selectCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		records := db.Select()
-		for i, rec := range records {
+		cur := db.Select()
+		var i int
+		for cur.Next() {
+			rec := cur.Scan()
 			fmt.Printf("%d: %s\n", i, rec)
+			i++
 		}
 		return db.Close()
 	},
