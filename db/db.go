@@ -40,8 +40,14 @@ func writeHeader(w io.WriterAt, hdr dbHeader) error {
 	return err
 }
 
+type Sink interface {
+	io.ReadWriteCloser
+	io.WriterAt
+	io.ReaderAt
+}
+
 type DB struct {
-	file  *os.File
+	sink  Sink
 	pages []*page
 	dirty map[int]*page
 }
@@ -51,7 +57,7 @@ func (db *DB) Close() error {
 	if len(db.dirty) > 0 {
 		err = db.Sync()
 	}
-	return multierr.Append(err, db.file.Close())
+	return multierr.Append(err, db.sink.Close())
 }
 
 func (db *DB) Sync() error {
@@ -59,12 +65,12 @@ func (db *DB) Sync() error {
 		Magic:    headerMagic,
 		NumPages: uint32(db.numPages()),
 	}
-	if err := writeHeader(db.file, hdr); err != nil {
+	if err := writeHeader(db.sink, hdr); err != nil {
 		return err
 	}
 	for _, page := range db.dirty {
 		off := dbHeaderSize + int64(page.id)*pageSize
-		_, err := db.file.WriteAt(page.buf, off)
+		_, err := db.sink.WriteAt(page.buf, off)
 		if err != nil {
 			return err
 		}
@@ -164,7 +170,7 @@ func Open(path string) (*DB, error) {
 		pages = append(pages, newPage(i, buf))
 	}
 	db := &DB{
-		file:  file,
+		sink:  file,
 		pages: pages,
 		dirty: map[int]*page{},
 	}
@@ -185,7 +191,7 @@ func Create(path string) (*DB, error) {
 		return nil, err
 	}
 	db := &DB{
-		file:  file,
+		sink:  file,
 		pages: []*page{},
 	}
 	return db, nil
