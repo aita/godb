@@ -12,12 +12,13 @@ import (
 )
 
 const (
-	headerMagic uint32 = 0x474f4442 // GODB
-	pageSize           = 8 * 1024
+	headerMagic     uint32 = 0x474f4442 // GODB
+	defaultPageSize        = 8 * 1024
 )
 
 type dbHeader struct {
 	Magic    uint32
+	PageSize uint32
 	NumPages uint32
 }
 
@@ -30,9 +31,9 @@ func readHeader(r io.Reader) (hdr dbHeader, err error) {
 	return
 }
 
-func writeHeader(w io.WriterAt, hdr dbHeader) error {
+func writeHeader(w io.WriterAt, hdr *dbHeader) error {
 	var buf bytes.Buffer
-	err := binary.Write(&buf, binary.LittleEndian, &hdr)
+	err := binary.Write(&buf, binary.LittleEndian, hdr)
 	if err != nil {
 		return err
 	}
@@ -47,9 +48,10 @@ type Sink interface {
 }
 
 type DB struct {
-	sink  Sink
-	pages []*page
-	dirty map[int]*page
+	sink     Sink
+	pageSize int
+	pages    []*page
+	dirty    map[int]*page
 }
 
 func (db *DB) Close() error {
@@ -60,16 +62,21 @@ func (db *DB) Close() error {
 	return multierr.Append(err, db.sink.Close())
 }
 
-func (db *DB) Sync() error {
-	hdr := dbHeader{
+func (db *DB) header() dbHeader {
+	return dbHeader{
 		Magic:    headerMagic,
+		PageSize: uint32(db.pageSize),
 		NumPages: uint32(db.numPages()),
 	}
-	if err := writeHeader(db.sink, hdr); err != nil {
+}
+
+func (db *DB) Sync() error {
+	hdr := db.header()
+	if err := writeHeader(db.sink, &hdr); err != nil {
 		return err
 	}
 	for _, page := range db.dirty {
-		off := dbHeaderSize + int64(page.id)*pageSize
+		off := dbHeaderSize + int64(page.id*db.pageSize)
 		_, err := db.sink.WriteAt(page.buf, off)
 		if err != nil {
 			return err
@@ -122,17 +129,17 @@ func (db *DB) Select() *Cursor {
 
 func (db *DB) Insert(data []byte) error {
 	var p *page
-	if len(db.pages) == 0 {
-		p = newPage(0, make([]byte, pageSize))
+	if db.numPages() == 0 {
+		p = newPage(0, make([]byte, db.pageSize))
 		if err := p.insert(data); err != nil {
 			return err
 		}
 		db.pages = append(db.pages, p)
 	} else {
-		p = db.pages[len(db.pages)-1]
+		p = db.pages[db.numPages()-1]
 		err := p.insert(data)
 		if err == ErrNoEmptySpace {
-			p = newPage(len(db.pages), make([]byte, pageSize))
+			p = newPage(db.numPages(), make([]byte, db.pageSize))
 			if err := p.insert(data); err != nil {
 				return err
 			}
@@ -162,7 +169,7 @@ func Open(path string) (*DB, error) {
 	}
 	pages := make([]*page, 0, hdr.NumPages)
 	for i := 0; i < int(hdr.NumPages); i++ {
-		buf := make([]byte, pageSize)
+		buf := make([]byte, hdr.PageSize)
 		if _, err := io.ReadFull(file, buf); err != nil {
 			err = multierr.Append(err, file.Close())
 			return nil, err
@@ -170,9 +177,10 @@ func Open(path string) (*DB, error) {
 		pages = append(pages, newPage(i, buf))
 	}
 	db := &DB{
-		sink:  file,
-		pages: pages,
-		dirty: map[int]*page{},
+		sink:     file,
+		pageSize: int(hdr.PageSize),
+		pages:    pages,
+		dirty:    map[int]*page{},
 	}
 	return db, nil
 }
@@ -184,9 +192,10 @@ func Create(path string) (*DB, error) {
 	}
 	hdr := dbHeader{
 		Magic:    headerMagic,
+		PageSize: defaultPageSize,
 		NumPages: 0,
 	}
-	if err = writeHeader(file, hdr); err != nil {
+	if err = writeHeader(file, &hdr); err != nil {
 		err = multierr.Append(err, file.Close())
 		return nil, err
 	}
