@@ -127,29 +127,42 @@ func (db *DB) Select() *Cursor {
 	}
 }
 
+func (db *DB) addPage() *page {
+	p := newPage(0, make([]byte, db.pageSize))
+	db.pages = append(db.pages, p)
+	return p
+}
+
 func (db *DB) Insert(data []byte) error {
 	var p *page
 	if db.numPages() == 0 {
-		p = newPage(0, make([]byte, db.pageSize))
+		p = db.addPage()
 		if err := p.insert(data); err != nil {
 			return err
 		}
-		db.pages = append(db.pages, p)
 	} else {
 		p = db.pages[db.numPages()-1]
 		err := p.insert(data)
 		if err == ErrNoEmptySpace {
-			p = newPage(db.numPages(), make([]byte, db.pageSize))
+			p = db.addPage()
 			if err := p.insert(data); err != nil {
 				return err
 			}
-			db.pages = append(db.pages, p)
 		} else if err != nil {
 			return err
 		}
 	}
 	db.dirty[p.id] = p
 	return nil
+}
+
+func newDB(sink Sink, pageSize int, pages []*page) *DB {
+	return &DB{
+		sink:     sink,
+		pageSize: pageSize,
+		pages:    pages,
+		dirty:    map[int]*page{},
+	}
 }
 
 func Open(path string) (*DB, error) {
@@ -176,12 +189,7 @@ func Open(path string) (*DB, error) {
 		}
 		pages = append(pages, newPage(i, buf))
 	}
-	db := &DB{
-		sink:     file,
-		pageSize: int(hdr.PageSize),
-		pages:    pages,
-		dirty:    map[int]*page{},
-	}
+	db := newDB(file, int(hdr.PageSize), pages)
 	return db, nil
 }
 
@@ -199,9 +207,6 @@ func Create(path string) (*DB, error) {
 		err = multierr.Append(err, file.Close())
 		return nil, err
 	}
-	db := &DB{
-		sink:  file,
-		pages: []*page{},
-	}
+	db := newDB(file, int(hdr.PageSize), nil)
 	return db, nil
 }
