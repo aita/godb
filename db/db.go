@@ -94,18 +94,41 @@ func (db *DB) numPages() int {
 	return len(db.pages)
 }
 
-func (db *DB) Select() [][]byte {
-	records := [][]byte{}
-	for _, page := range db.pages {
-		hdr := page.header()
-		for i := 0; i < int(hdr.numItems); i++ {
-			src := page.read(i)
-			dst := make([]byte, len(src))
-			copy(dst, src)
-			records = append(records, dst)
-		}
+type Cursor struct {
+	db        *DB
+	pageIndex int
+	rowIndex  int
+}
+
+func (c *Cursor) Next() bool {
+	if c.db.numPages() <= c.pageIndex {
+		return false
 	}
-	return records
+	page := c.db.pages[c.pageIndex]
+	hdr := page.header()
+	return c.rowIndex < int(hdr.numItems)
+}
+
+func (c *Cursor) Scan() []byte {
+	page := c.db.pages[c.pageIndex]
+	src := page.read(c.rowIndex)
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	c.rowIndex++
+	hdr := page.header()
+	if c.rowIndex >= int(hdr.numItems) {
+		c.pageIndex++
+		c.rowIndex = 0
+	}
+	return dst
+}
+
+func (db *DB) Select() *Cursor {
+	return &Cursor{
+		db:        db,
+		pageIndex: 0,
+		rowIndex:  0,
+	}
 }
 
 func (db *DB) addPage() *page {
