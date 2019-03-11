@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	headerMagic     uint32 = 0x474f4442 // GODB
+	headerMagic     uint32 = 0x42444f47
 	defaultPageSize        = 8 * 1024
 )
 
