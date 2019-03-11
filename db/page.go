@@ -1,17 +1,13 @@
 package db
 
 import (
-	"errors"
 	"unsafe"
 )
 
-const (
-	pageHeaderSize   = 24
-	recordHeaderSize = 4
-	itemIDSize       = 4
+var (
+	pageHeaderSize = int(unsafe.Sizeof(pageHeader{}))
+	itemIDSize     = int(unsafe.Sizeof(itemID(0)))
 )
-
-var ErrNoEmptySpace = errors.New("db: no empty space")
 
 type itemID uint32
 
@@ -28,22 +24,26 @@ func (it itemID) off() int {
 	return int(it & 0xFFFF)
 }
 
-type page struct {
-	id  int
-	buf []byte
+type pageID int64
+
+type heapPage struct {
+	id    pageID
+	buf   []byte
+	dirty bool
 }
 
-func newPage(id int, buf []byte) *page {
-	p := &page{
-		id:  id,
-		buf: buf,
+func newHeapPage(id pageID, buf []byte) *heapPage {
+	page := &heapPage{
+		id:    id,
+		buf:   buf,
+		dirty: false,
 	}
-	hdr := p.header()
+	hdr := page.header()
 	if hdr.numItems == 0 {
-		hdr.emptyStart = pageHeaderSize
+		hdr.emptyStart = uint32(pageHeaderSize)
 		hdr.emptyEnd = uint32(len(buf))
 	}
-	return p
+	return page
 }
 
 type pageHeader struct {
@@ -56,38 +56,38 @@ func (h *pageHeader) remainingSize() int {
 	return int(h.emptyEnd - h.emptyStart)
 }
 
-func (p *page) header() *pageHeader {
+func (p *heapPage) header() *pageHeader {
 	return (*pageHeader)(unsafe.Pointer(&p.buf[0]))
 }
 
-func (p *page) itemPos(i int) uintptr {
-	return pageHeaderSize + uintptr(i)*itemIDSize
+func (p *heapPage) itemPos(i int) uintptr {
+	return uintptr(pageHeaderSize + i*itemIDSize)
 }
 
-func (p *page) getItem(i int) itemID {
+func (p *heapPage) getItem(i int) itemID {
 	it := (*itemID)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
 	return *it
 }
 
-func (p *page) setItem(i int, it itemID) {
+func (p *heapPage) setItem(i int, it itemID) {
 	ptr := (*itemID)(unsafe.Pointer(&p.buf[p.itemPos(i)]))
 	*ptr = it
 }
 
-func (p *page) read(i int) []byte {
+func (p *heapPage) read(i int) []byte {
 	it := p.getItem(i)
 	off := it.off()
 	size := it.size()
 	return p.buf[off : off+size]
 }
 
-func (p *page) hasEnoughSpace(data []byte) bool {
+func (p *heapPage) hasEnoughSpace(data []byte) bool {
 	hdr := p.header()
 	size := len(data)
 	return size <= hdr.remainingSize()
 }
 
-func (p *page) insert(data []byte) error {
+func (p *heapPage) insert(data []byte) error {
 	hdr := p.header()
 	size := len(data)
 	if hdr.remainingSize() < size {
@@ -100,5 +100,6 @@ func (p *page) insert(data []byte) error {
 	hdr.numItems++
 	hdr.emptyStart += uint32(itemIDSize)
 	hdr.emptyEnd = uint32(off)
+	p.dirty = true
 	return nil
 }

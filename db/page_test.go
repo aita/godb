@@ -9,7 +9,7 @@ import (
 
 func TestPage(t *testing.T) {
 	buf := make([]byte, 8*1024)
-	page := newPage(1, buf)
+	page := newHeapPage(1, buf)
 
 	hdr := page.header()
 	assert.Equal(t, uint16(0), hdr.numItems)

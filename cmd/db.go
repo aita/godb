@@ -46,8 +46,18 @@ var selectCmd = &cobra.Command{
 		}
 		cur := db.Select()
 		var i int
-		for cur.Next() {
-			rec := cur.Scan()
+		for {
+			hasNext, err := cur.Next()
+			if err != nil {
+				return err
+			}
+			if !hasNext {
+				break
+			}
+			rec, err := cur.Scan()
+			if err != nil {
+				return err
+			}
 			fmt.Printf("%d: %s\n", i, rec)
 			i++
 		}
