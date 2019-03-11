@@ -57,12 +57,12 @@ type DB struct {
 func (db *DB) Close() error {
 	var err error
 	if len(db.dirty) > 0 {
-		err = db.Sync()
+		err = db.Flush()
 	}
 	return multierr.Append(err, db.sink.Close())
 }
 
-func (db *DB) header() dbHeader {
+func (db *DB) makeHeader() dbHeader {
 	return dbHeader{
 		Magic:    headerMagic,
 		PageSize: uint32(db.pageSize),
@@ -70,20 +70,24 @@ func (db *DB) header() dbHeader {
 	}
 }
 
-func (db *DB) Sync() error {
-	hdr := db.header()
+func (db *DB) Flush() error {
+	hdr := db.makeHeader()
 	if err := writeHeader(db.sink, &hdr); err != nil {
 		return err
 	}
 	for _, page := range db.dirty {
-		off := dbHeaderSize + int64(page.id*db.pageSize)
-		_, err := db.sink.WriteAt(page.buf, off)
-		if err != nil {
+		if err := db.flushPage(page); err != nil {
 			return err
 		}
 	}
 	db.dirty = map[int]*page{}
 	return nil
+}
+
+func (db *DB) flushPage(p *page) error {
+	off := dbHeaderSize + int64(p.id*db.pageSize)
+	_, err := db.sink.WriteAt(p.buf, off)
+	return err
 }
 
 func (db *DB) numPages() int {
@@ -137,20 +141,14 @@ func (db *DB) Insert(data []byte) error {
 	var p *page
 	if db.numPages() == 0 {
 		p = db.addPage()
-		if err := p.insert(data); err != nil {
-			return err
-		}
 	} else {
 		p = db.pages[db.numPages()-1]
-		err := p.insert(data)
-		if err == ErrNoEmptySpace {
+		if !p.hasEnoughSpace(data) {
 			p = db.addPage()
-			if err := p.insert(data); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
 		}
+	}
+	if err := p.insert(data); err != nil {
+		return err
 	}
 	db.dirty[p.id] = p
 	return nil
