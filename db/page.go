@@ -81,6 +81,12 @@ func (p *page) read(i int) []byte {
 	return p.buf[off : off+size]
 }
 
+func (p *page) hasEnoughSpace(data []byte) bool {
+	hdr := p.header()
+	size := len(data)
+	return size <= hdr.remainingSize()
+}
+
 func (p *page) insert(data []byte) error {
 	hdr := p.header()
 	size := len(data)
